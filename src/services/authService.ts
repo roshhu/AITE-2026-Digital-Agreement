@@ -61,19 +61,20 @@ export const authService = {
       }
     }
 
-    // 3. Verify Name and Email with Strict Logic
-    const normalizedInputName = normalizeName(name);
-    const normalizedStoredName = normalizeName(volunteer.full_name);
-    const nameMatch = normalizedInputName === normalizedStoredName;
+    // 3. Verify Email and Mobile (Name is Optional now)
+    // const normalizedInputName = normalizeName(name);
+    // const normalizedStoredName = normalizeName(volunteer.full_name);
+    // const nameMatch = normalizedInputName === normalizedStoredName;
+    
     const emailMatch = volunteer.email.toLowerCase().trim() === email.toLowerCase().trim();
     const mobileMatch = volunteer.mobile_number === mobile; // Ensure mobile matches exactly
 
-    if (!nameMatch || !emailMatch || !mobileMatch) {
+    if (!emailMatch || !mobileMatch) {
       // 3.1 Log mismatch specifically
       let reason = 'Unknown mismatch';
-      if (!mobileMatch) reason = 'Mobile mismatch'; // Should not happen if query succeeded, but safety check
-      else if (!nameMatch) reason = 'Name mismatch';
+      if (!mobileMatch) reason = 'Mobile mismatch'; 
       else if (!emailMatch) reason = 'Email mismatch';
+      // else if (!nameMatch) reason = 'Name mismatch'; // Disabled
 
       await supabase.from('name_mismatch_logs').insert({
         volunteer_id: volunteer.id,

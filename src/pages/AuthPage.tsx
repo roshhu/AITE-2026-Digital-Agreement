@@ -379,6 +379,9 @@ export default function AuthPage() {
                   disabled={loading}
                   className="border-forest-200 focus:border-tiger-500 focus:ring-tiger-500"
                 />
+                <div className="text-xs text-forest-600 mt-1 italic">
+                  (Please use the mobile number that you provided during your volunteer registration)
+                </div>
               </div>
 
               <div className="space-y-2">
