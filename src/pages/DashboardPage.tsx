@@ -66,9 +66,13 @@ export default function DashboardPage() {
     if (!isAuto) setLoading(true);
     try {
       // 1. Get Exact Counts (Bypasses 1000 row limit)
-      const { count: totalCount } = await supabase
+      // Note: We use count: 'exact' with head: true to get count without data.
+      const { count: totalCount, error: countError } = await supabase
         .from('volunteers')
         .select('*', { count: 'exact', head: true });
+
+      if (countError) console.error('Count Error:', countError);
+      console.log('DEBUG: Total Count from DB:', totalCount);
 
       const { count: completedCount } = await supabase
         .from('volunteers')
@@ -80,12 +84,14 @@ export default function DashboardPage() {
         .select('*', { count: 'exact', head: true })
         .eq('status', 'blocked');
 
-      // 2. Fetch Data (Limit increased to 2000 for table)
+      // 2. Fetch Data (Limit increased to 5000 for table)
       const { data: volunteersData, error: vError } = await supabase
         .from('volunteers')
         .select('*')
         .order('created_at', { ascending: false })
-        .limit(2000); // Increased limit
+        .limit(5000); // Increased limit again to be sure
+
+      if (vError) throw vError;
 
       if (vError) throw vError;
 
@@ -469,7 +475,7 @@ export default function DashboardPage() {
               <h3 className="text-2xl font-bold text-white">Dashboard Overview</h3>
               <p className="text-slate-500 text-sm flex items-center gap-2 mt-1">
                  <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse shadow-glow-green"></span>
-                 Live Data System • Last updated: {lastRefreshed.toLocaleTimeString()}
+                 Live Data System • Last updated: {lastRefreshed.toLocaleTimeString()} (v2.0)
               </p>
            </div>
            <div className="flex gap-2">
