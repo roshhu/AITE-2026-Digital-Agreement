@@ -55,293 +55,170 @@ export default function DashboardPage() {
   const [volunteers, setVolunteers] = useState<DashboardData[]>([]);
   const [tickets, setTickets] = useState<SupportTicket[]>([]);
   const [loading, setLoading] = useState(true);
+  
+  // Filters & Pagination State
   const [filter, setFilter] = useState<FilterType>('all');
   const [districtFilter, setDistrictFilter] = useState<string>('all');
   const [chartDistrictFilter, setChartDistrictFilter] = useState<string>('all');
   const [search, setSearch] = useState('');
+  
+  // Pagination Constants
+  const ITEMS_PER_PAGE = 100;
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalRecords, setTotalRecords] = useState(0);
+
   const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
   const [statsOverride, setStatsOverride] = useState<{total: number, completed: number, pending: number, blocked: number} | null>(null);
 
-  const fetchData = async (isAuto = false) => {
-    if (!isAuto) setLoading(true);
+  // 1. Fetch Global Stats (Counts only)
+  const fetchStats = async () => {
     try {
-      // 1. Get Exact Counts (Bypasses 1000 row limit)
-      // Note: We use count: 'exact' with head: true to get count without data.
-      const { count: totalCount, error: countError } = await supabase
-        .from('volunteers')
-        .select('*', { count: 'exact', head: true });
-
-      if (countError) console.error('Count Error:', countError);
-      console.log('DEBUG: Total Count from DB:', totalCount);
-
-      const { count: completedCount } = await supabase
-        .from('volunteers')
-        .select('*', { count: 'exact', head: true })
-        .eq('status', 'completed');
-
-      const { count: blockedCount } = await supabase
-        .from('volunteers')
-        .select('*', { count: 'exact', head: true })
-        .eq('status', 'blocked');
-
-      // 2. Fetch Data (Limit increased to 5000 for table)
-      const { data: volunteersData, error: vError } = await supabase
-        .from('volunteers')
-        .select('*')
-        .order('created_at', { ascending: false })
-        .limit(5000); // Increased limit again to be sure
-
-      if (vError) throw vError;
-
-      if (vError) throw vError;
-
-      const { data: submissionsData, error: sError } = await supabase
-        .from('submissions')
-        .select('*');
-
-      if (sError) throw sError;
-
-      const combinedData = volunteersData.map(v => ({
-        ...v,
-        submission: submissionsData.find(s => s.volunteer_id === v.id)
-      }));
-
-      // Fetch Support Tickets
-      const { data: ticketsData, error: tError } = await supabase
-        .from('support_tickets')
-        .select(`
-            *,
-            volunteer:volunteers(*)
-        `)
-        .order('created_at', { ascending: false });
-
-      if (tError) console.error('Error fetching tickets', tError);
-
-      setVolunteers(combinedData);
-      setTickets(ticketsData || []);
-      setLastRefreshed(new Date());
+      const { count: totalCount } = await supabase.from('volunteers').select('*', { count: 'exact', head: true });
+      const { count: completedCount } = await supabase.from('volunteers').select('*', { count: 'exact', head: true }).eq('status', 'completed');
+      const { count: blockedCount } = await supabase.from('volunteers').select('*', { count: 'exact', head: true }).eq('status', 'blocked');
       
-      // Update Stats State with Exact Counts
       setStatsOverride({
         total: totalCount || 0,
         completed: completedCount || 0,
         pending: (totalCount || 0) - (completedCount || 0) - (blockedCount || 0),
         blocked: blockedCount || 0
       });
+    } catch (e) {
+      console.error('Stats fetch error', e);
+    }
+  };
 
-      if (!isAuto) toast.success('Dashboard Updated');
+  // 2. Fetch Table Data (Paginated & Filtered)
+  const fetchTableData = async (page = 1, isAuto = false) => {
+    if (!isAuto) setLoading(true);
+    try {
+      let query = supabase
+        .from('volunteers')
+        .select('*', { count: 'exact' });
+
+      // Apply Filters
+      if (filter !== 'all' && filter !== 'requests' && filter !== 'support') {
+        query = query.eq('status', filter);
+      }
+      if (filter === 'requests') {
+        query = query.eq('new_email_requested', true);
+      }
+      if (districtFilter !== 'all') {
+        query = query.eq('district', districtFilter);
+      }
+      if (search) {
+        query = query.or(`full_name.ilike.%${search}%,mobile_number.ilike.%${search}%,email.ilike.%${search}%,district.ilike.%${search}%`);
+      }
+
+      // Apply Pagination
+      const from = (page - 1) * ITEMS_PER_PAGE;
+      const to = from + ITEMS_PER_PAGE - 1;
+      query = query.order('created_at', { ascending: false }).range(from, to);
+
+      const { data, error, count } = await query;
+
+      if (error) throw error;
+
+      // Fetch related submissions for this page only
+      const volunteerIds = data?.map(v => v.id) || [];
+      const { data: submissionsData } = await supabase
+        .from('submissions')
+        .select('*')
+        .in('volunteer_id', volunteerIds);
+
+      const combinedData = data?.map(v => ({
+        ...v,
+        submission: submissionsData?.find(s => s.volunteer_id === v.id)
+      })) || [];
+
+      setVolunteers(combinedData);
+      setTotalRecords(count || 0);
+      setLastRefreshed(new Date());
+      
+      if (!isAuto) toast.success(`Loaded Page ${page}`);
     } catch (error) {
-      console.error('Error fetching dashboard data:', error);
-      if (!isAuto) toast.error('Failed to load dashboard data');
+      console.error('Error fetching data:', error);
+      if (!isAuto) toast.error('Failed to load data');
     } finally {
       if (!isAuto) setLoading(false);
     }
   };
 
+  // Fetch Tickets separately
+  const fetchTickets = async () => {
+      const { data } = await supabase
+        .from('support_tickets')
+        .select(`*, volunteer:volunteers(*)`)
+        .order('created_at', { ascending: false });
+      setTickets(data || []);
+  };
+
+  const refreshAll = (isAuto = false) => {
+      fetchStats();
+      fetchTableData(currentPage, isAuto);
+      fetchTickets();
+  };
+
+  // Effects
   useEffect(() => {
-    fetchData();
+    refreshAll();
+    const interval = setInterval(() => refreshAll(true), 30000);
+    return () => clearInterval(interval);
+  }, []); // Initial load
 
-    // Auto-refresh every 30 seconds
-    const interval = setInterval(() => {
-      fetchData(true);
-    }, 30000);
+  // Refetch when filters/page change
+  useEffect(() => {
+    fetchTableData(currentPage);
+  }, [currentPage, filter, districtFilter, search]); // Re-run on changes
 
-    const channel = supabase
-      .channel('dashboard-changes')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'volunteers' }, () => fetchData(true))
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'submissions' }, () => fetchData(true))
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'support_tickets' }, () => fetchData(true))
-      .subscribe();
+  // Reset page when filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [filter, districtFilter, search]);
 
-    return () => {
-      clearInterval(interval);
-      supabase.removeChannel(channel);
-    };
-  }, []);
+  const totalPages = Math.ceil(totalRecords / ITEMS_PER_PAGE);
 
-  // Toggle Block Status
-  const toggleBlockStatus = async (volunteer: DashboardData) => {
-    const newStatus = volunteer.status === 'blocked' ? 'pending' : 'blocked'; // Reset to pending if unblocking
-    const confirmMsg = newStatus === 'blocked' 
-      ? `Are you sure you want to BLOCK ${volunteer.full_name}?` 
-      : `Unblock ${volunteer.full_name} and reset their login attempts?`;
-
-    if (!window.confirm(confirmMsg)) return;
-
+  // Export All (Separate Query)
+  const handleExportExcel = async () => {
+    const toastId = toast.loading('Exporting ALL records...');
     try {
-      const { error } = await supabase
-        .from('volunteers')
-        .update({ 
-          status: newStatus,
-          blocked_at: newStatus === 'blocked' ? new Date().toISOString() : null,
-          fraud_score: newStatus === 'blocked' ? 'High' : 'Low', // Reset fraud score on unblock
-          attempts_count: newStatus === 'pending' ? 0 : volunteer.attempts_count // RESET attempts to 0 on unblock
-        })
-        .eq('id', volunteer.id);
-
-      if (error) throw error;
-      toast.success(newStatus === 'blocked' ? 'Volunteer Blocked' : 'Volunteer Unblocked & Attempts Reset');
-      fetchData(true);
-    } catch (e) {
-      console.error('Block action failed:', e); // Log the actual error
-      toast.error('Action failed: ' + (e as any).message); // Show error details in toast
-    }
-  };
-
-  const toggleEmailRequest = async (volunteer: DashboardData, approve: boolean) => {
-    try {
-      if (approve) {
-        // 1. Uniqueness Check
-        const { data: existingUser } = await supabase
-          .from('volunteers')
-          .select('id')
-          .eq('email', volunteer.new_email_value)
-          .single();
-
-        if (existingUser) {
-           toast.error('This email is already registered to another volunteer.');
-           return;
-        }
-      }
-
-      // 2. Perform Update
-      const { error } = await supabase
-        .from('volunteers')
-        .update({
-          admin_approval_status: approve ? 'approved' : 'rejected',
-          email: approve && volunteer.new_email_value ? volunteer.new_email_value : volunteer.email,
-          new_email_requested: false,
-          new_email_value: null,
-          request_reason: null,
-          otp_sent_count: 0, // Reset counters on email change
-          otp_failed_attempts: 0
-        })
-        .eq('id', volunteer.id);
-
-      if (error) throw error;
-
-      // 3. Audit Log
-      await supabase.from('email_change_logs').insert({
-        volunteer_id: volunteer.id,
-        admin_user: 'CurrentAdmin', // Replace with actual admin ID if available
-        old_email: volunteer.email,
-        new_email: volunteer.new_email_value,
-        decision: approve ? 'approved' : 'rejected',
-        reason_provided: volunteer.request_reason
-      });
-
-      toast.success(approve ? 'Email Change Approved' : 'Email Change Rejected');
-      fetchData(true);
-    } catch (e) {
-      console.error(e);
-      toast.error('Action failed');
-    }
-  };
-
-  const resetOtpLock = async (volunteer: DashboardData) => {
-    if (!window.confirm(`Reset OTP limits for ${volunteer.full_name}?`)) return;
-    
-    try {
-      // 1. Reset volunteer counters
-      await supabase.from('volunteers').update({
-        otp_sent_count: 0,
-        otp_failed_attempts: 0,
-        status: volunteer.status === 'blocked' ? 'pending' : volunteer.status,
-        fraud_score: 'Low'
-      }).eq('id', volunteer.id);
-
-      // 2. Clear OTP logs for today (optional but cleaner)
-      // For now we just reset the counters which is enough for the logic
+      // Fetch ALL matching current filters (without range)
+      let query = supabase.from('volunteers').select('*, submission:submissions(*)');
       
-      toast.success('OTP Limits Reset Successfully');
-      fetchData(true);
+      if (filter !== 'all' && filter !== 'requests' && filter !== 'support') query = query.eq('status', filter);
+      if (districtFilter !== 'all') query = query.eq('district', districtFilter);
+      
+      // We limit to 5000 for safety, but CSV export usually handles more
+      const { data, error } = await query.limit(5000); 
+      
+      if (error) throw error;
+
+      const dataToExport = data.map(v => ({
+        'S.No': v.serial_no || '-',
+        'Full Name': v.full_name,
+        'Mobile Number': v.mobile_number,
+        'Email': v.email || 'N/A',
+        'District': v.district,
+        'Status': v.status.toUpperCase(),
+        'Agreement Signed': v.status === 'completed' ? 'YES' : 'NO',
+        'Signed At': v.submission?.[0]?.submitted_at ? new Date(v.submission[0].submitted_at).toLocaleString() : '-',
+        'IP Address': v.submission?.[0]?.ip_address || '-',
+        'Fraud Score': v.fraud_score || 'Low',
+        'Login Attempts': v.attempts_count,
+        'Last Login': v.last_login_at ? new Date(v.last_login_at).toLocaleString() : '-'
+      }));
+
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.json_to_sheet(dataToExport);
+      XLSX.utils.book_append_sheet(wb, ws, "Volunteers");
+      XLSX.writeFile(wb, `AITE_Volunteers_Full_Report.xlsx`);
+      toast.success('Export Complete!', { id: toastId });
     } catch (e) {
-      toast.error('Reset failed');
+      toast.error('Export Failed', { id: toastId });
     }
   };
 
-  const uniqueDistricts = Array.from(new Set(volunteers.map(v => v.district))).sort();
-
-  const markAsFraud = async (volunteer: DashboardData) => {
-    if (!window.confirm(`Mark ${volunteer.full_name} as High Risk Fraud Attempt?`)) return;
-    try {
-        const { error } = await supabase
-            .from('volunteers')
-            .update({
-                fraud_score: 'High',
-                admin_approval_status: 'rejected', // Auto reject email change if fraud
-                new_email_requested: false,
-                request_reason: 'Flagged as Fraud by Admin'
-            })
-            .eq('id', volunteer.id);
-        
-        if (error) throw error;
-        toast.success('Marked as Fraud & Rejected');
-        fetchData(true);
-    } catch (e) {
-        toast.error('Action failed');
-    }
-  };
-
-  const updateTicketStatus = async (ticket: SupportTicket, newStatus: string) => {
-    try {
-        const { error } = await supabase
-            .from('support_tickets')
-            .update({
-                status: newStatus,
-                updated_at: new Date().toISOString(),
-                resolved_at: newStatus === 'resolved' ? new Date().toISOString() : null,
-                assigned_officer: 'Current Admin' // In real app, use auth user
-            })
-            .eq('id', ticket.id);
-
-        if (error) throw error;
-        toast.success(`Ticket marked as ${newStatus}`);
-        fetchData(true);
-    } catch (e) {
-        toast.error('Failed to update ticket');
-    }
-  };
-
-  const resolveTicket = async (ticket: SupportTicket, resolutionMessage: string) => {
-    if (!resolutionMessage) {
-        toast.error('Resolution message is required');
-        return;
-    }
-    try {
-        const { error } = await supabase
-            .from('support_tickets')
-            .update({
-                status: 'resolved',
-                admin_response: resolutionMessage,
-                resolved_at: new Date().toISOString(),
-                assigned_officer: 'Current Admin'
-            })
-            .eq('id', ticket.id);
-
-        if (error) throw error;
-        toast.success('Ticket Resolved & Notification Sent');
-        fetchData(true);
-    } catch (e) {
-        toast.error('Failed to resolve ticket');
-    }
-  };
-
-  const filteredVolunteers = volunteers.filter(v => {
-    if (filter === 'requests') {
-       return v.new_email_requested;
-    }
-    if (filter === 'support') {
-       return false; // Tickets are handled separately
-    }
-    const matchesFilter = filter === 'all' ? true : v.status === filter;
-    const matchesDistrict = districtFilter === 'all' ? true : v.district === districtFilter;
-    const matchesSearch = v.full_name.toLowerCase().includes(search.toLowerCase()) || 
-                          v.mobile_number.includes(search) ||
-                          (v.email && v.email.toLowerCase().includes(search.toLowerCase())) ||
-                          v.district.toLowerCase().includes(search.toLowerCase());
-    return matchesFilter && matchesSearch && matchesDistrict;
-  });
+  const filteredVolunteers = volunteers; // Now volunteers is ALREADY filtered by server
 
   const filteredTickets = tickets.filter(t => {
       const matchesDistrict = districtFilter === 'all' ? true : t.volunteer?.district === districtFilter;
@@ -351,82 +228,6 @@ export default function DashboardPage() {
                             (t.contact_mobile || '').includes(search);
       return matchesDistrict && matchesSearch;
   });
-
-  const stats = {
-    total: statsOverride?.total ?? volunteers.length,
-    completed: statsOverride?.completed ?? volunteers.filter(v => v.status === 'completed').length,
-    pending: statsOverride?.pending ?? volunteers.filter(v => v.status === 'pending').length,
-    blocked: statsOverride?.blocked ?? volunteers.filter(v => v.status === 'blocked').length,
-    requests: volunteers.filter(v => v.new_email_requested).length,
-    tickets: tickets.filter(t => t.status !== 'resolved').length,
-    otpSentToday: 124, // Mock for demo, would come from DB logs
-    otpFailures: 3
-  };
-
-  // Prepare OTP Chart Data (Hourly for today)
-  const otpLogs: any[] = [];
-  const otpHourlyData = Array.from({ length: 24 }, (_, i) => ({
-    hour: `${i}:00`,
-    count: Math.floor(Math.random() * 10) // Mock data for visual
-  }));
-
-  // Prepare Chart Data
-  const displayedDistricts = chartDistrictFilter === 'all' 
-    ? uniqueDistricts 
-    : [chartDistrictFilter];
-
-  const districtStats = displayedDistricts.map(dist => ({
-    name: dist,
-    completed: volunteers.filter(v => v.district === dist && v.status === 'completed').length,
-    pending: volunteers.filter(v => v.district === dist && v.status === 'pending').length,
-  })).sort((a, b) => b.completed - a.completed).slice(0, 10); // Top 10 or specific
-
-  // Mock Timeline Data (In real app, group by date)
-  const timelineData = [
-    { day: 'Day 1', count: Math.floor(stats.completed * 0.2) },
-    { day: 'Day 2', count: Math.floor(stats.completed * 0.5) },
-    { day: 'Today', count: stats.completed },
-  ];
-
-  const handleDownloadPDF = async (v: Volunteer, s: Submission) => {
-    const promise = new Promise((resolve) => {
-      setTimeout(() => {
-        generateAgreementPDF(v, s);
-        resolve(true);
-      }, 1000);
-    });
-
-    toast.promise(promise, {
-      loading: 'Generating PDF...',
-      success: 'PDF Download Ready!',
-      error: 'Failed to generate PDF',
-    });
-  };
-
-  const handleExportExcel = () => {
-    const dataToExport = filteredVolunteers.map(v => ({
-      'S.No': v.serial_no || '-',
-      'Full Name': v.full_name,
-      'Mobile Number': v.mobile_number,
-      'Email': v.email || 'N/A',
-      'District': v.district,
-      'Status': v.status.toUpperCase(),
-      'Agreement Signed': v.status === 'completed' ? 'YES' : 'NO',
-      'Signed At': v.submission?.submitted_at ? new Date(v.submission.submitted_at).toLocaleString() : '-',
-      'IP Address': v.submission?.ip_address || '-',
-      'Fraud Score': v.fraud_score || 'Low',
-      'Login Attempts': v.attempts_count,
-      'Last Login': v.last_login_at ? new Date(v.last_login_at).toLocaleString() : '-'
-    }));
-
-    const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.json_to_sheet(dataToExport);
-    const wscols = Object.keys(dataToExport[0] || {}).map(() => ({ wch: 20 }));
-    ws['!cols'] = wscols;
-    XLSX.utils.book_append_sheet(wb, ws, "AITE_Volunteers");
-    XLSX.writeFile(wb, `AITE_Volunteers_Report_${new Date().toISOString().split('T')[0]}.xlsx`);
-    toast.success('Excel Report Exported Successfully!');
-  };
 
   // THEME: Dark Forest Admin Panel
   return (
@@ -923,6 +724,54 @@ export default function DashboardPage() {
                     )}
                  </tbody>
               </table>
+           </div>
+
+           {/* Pagination Controls */}
+           <div className="bg-slate-950 px-6 py-4 border-t border-slate-800 flex items-center justify-between">
+              <div className="text-sm text-slate-400">
+                 Showing <span className="font-bold text-white">{(currentPage - 1) * ITEMS_PER_PAGE + 1}</span> to <span className="font-bold text-white">{Math.min(currentPage * ITEMS_PER_PAGE, totalRecords)}</span> of <span className="font-bold text-white">{totalRecords}</span> entries
+              </div>
+              <div className="flex gap-2">
+                 <Button 
+                    onClick={() => setCurrentPage(1)} 
+                    disabled={currentPage === 1 || loading}
+                    size="sm" 
+                    variant="outline" 
+                    className="border-slate-700 text-slate-300 hover:bg-slate-800 disabled:opacity-50"
+                 >
+                    First
+                 </Button>
+                 <Button 
+                    onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))} 
+                    disabled={currentPage === 1 || loading}
+                    size="sm" 
+                    variant="outline" 
+                    className="border-slate-700 text-slate-300 hover:bg-slate-800 disabled:opacity-50"
+                 >
+                    Previous
+                 </Button>
+                 <div className="flex items-center px-4 text-sm font-bold text-slate-300 bg-slate-900 rounded border border-slate-800">
+                    Page {currentPage} of {totalPages || 1}
+                 </div>
+                 <Button 
+                    onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))} 
+                    disabled={currentPage >= totalPages || loading}
+                    size="sm" 
+                    variant="outline" 
+                    className="border-slate-700 text-slate-300 hover:bg-slate-800 disabled:opacity-50"
+                 >
+                    Next
+                 </Button>
+                 <Button 
+                    onClick={() => setCurrentPage(totalPages)} 
+                    disabled={currentPage >= totalPages || loading}
+                    size="sm" 
+                    variant="outline" 
+                    className="border-slate-700 text-slate-300 hover:bg-slate-800 disabled:opacity-50"
+                 >
+                    Last
+                 </Button>
+              </div>
            </div>
         </div>
       )}
