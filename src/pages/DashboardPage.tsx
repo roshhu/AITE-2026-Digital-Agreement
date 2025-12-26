@@ -60,14 +60,32 @@ export default function DashboardPage() {
   const [chartDistrictFilter, setChartDistrictFilter] = useState<string>('all');
   const [search, setSearch] = useState('');
   const [lastRefreshed, setLastRefreshed] = useState<Date>(new Date());
+  const [statsOverride, setStatsOverride] = useState<{total: number, completed: number, pending: number, blocked: number} | null>(null);
 
   const fetchData = async (isAuto = false) => {
     if (!isAuto) setLoading(true);
     try {
+      // 1. Get Exact Counts (Bypasses 1000 row limit)
+      const { count: totalCount } = await supabase
+        .from('volunteers')
+        .select('*', { count: 'exact', head: true });
+
+      const { count: completedCount } = await supabase
+        .from('volunteers')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'completed');
+
+      const { count: blockedCount } = await supabase
+        .from('volunteers')
+        .select('*', { count: 'exact', head: true })
+        .eq('status', 'blocked');
+
+      // 2. Fetch Data (Limit increased to 2000 for table)
       const { data: volunteersData, error: vError } = await supabase
         .from('volunteers')
         .select('*')
-        .order('created_at', { ascending: false });
+        .order('created_at', { ascending: false })
+        .limit(2000); // Increased limit
 
       if (vError) throw vError;
 
@@ -96,6 +114,15 @@ export default function DashboardPage() {
       setVolunteers(combinedData);
       setTickets(ticketsData || []);
       setLastRefreshed(new Date());
+      
+      // Update Stats State with Exact Counts
+      setStatsOverride({
+        total: totalCount || 0,
+        completed: completedCount || 0,
+        pending: (totalCount || 0) - (completedCount || 0) - (blockedCount || 0),
+        blocked: blockedCount || 0
+      });
+
       if (!isAuto) toast.success('Dashboard Updated');
     } catch (error) {
       console.error('Error fetching dashboard data:', error);
@@ -320,10 +347,10 @@ export default function DashboardPage() {
   });
 
   const stats = {
-    total: volunteers.length,
-    completed: volunteers.filter(v => v.status === 'completed').length,
-    pending: volunteers.filter(v => v.status === 'pending').length,
-    blocked: volunteers.filter(v => v.status === 'blocked').length,
+    total: statsOverride?.total ?? volunteers.length,
+    completed: statsOverride?.completed ?? volunteers.filter(v => v.status === 'completed').length,
+    pending: statsOverride?.pending ?? volunteers.filter(v => v.status === 'pending').length,
+    blocked: statsOverride?.blocked ?? volunteers.filter(v => v.status === 'blocked').length,
     requests: volunteers.filter(v => v.new_email_requested).length,
     tickets: tickets.filter(t => t.status !== 'resolved').length,
     otpSentToday: 124, // Mock for demo, would come from DB logs
