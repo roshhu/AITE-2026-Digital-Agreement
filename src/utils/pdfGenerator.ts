@@ -32,7 +32,10 @@ export const generateAgreementPDF = (volunteer: Volunteer, submission: Submissio
   
   // Dashed Line
   doc.setLineWidth(0.5);
-  doc.setLineDash([1, 1], 0);
+  // @ts-ignore - setLineDash is available in newer jsPDF types but might be missing in some definitions
+  if (doc.setLineDash) {
+    doc.setLineDash([1, 1], 0);
+  }
   doc.line(20, 70, 190, 70);
 
   // To Address

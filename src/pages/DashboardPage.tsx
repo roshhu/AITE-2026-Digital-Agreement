@@ -33,6 +33,11 @@ interface SupportTicket {
 
 interface DashboardData extends Volunteer {
   submission?: Submission;
+  new_email_requested?: boolean;
+  new_email_value?: string;
+  request_reason?: string;
+  email_requested_at?: string;
+  otp_failed_attempts?: number;
 }
 
 const COLORS = {
