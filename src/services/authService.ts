@@ -117,8 +117,8 @@ export const authService = {
        await supabase.from('volunteers').update({ attempts_count: 0 }).eq('id', volunteer.id);
     }
 
-    // 4. Generate 6-Digit OTP (Custom Generation)
-    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    // 4. Generate 8-Digit OTP (Matches Supabase Default / UI)
+    const otp = Math.floor(10000000 + Math.random() * 90000000).toString();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString(); // 10 mins
 
     try {

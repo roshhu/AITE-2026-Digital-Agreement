@@ -153,7 +153,7 @@ export default function AuthPage() {
   const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!otp || otp.length < 6) {
-      toast.error('Enter valid 6-digit OTP');
+      toast.error('Enter valid OTP');
       return;
     }
 
@@ -436,9 +436,9 @@ export default function AuthPage() {
                 <label className="text-sm font-bold text-forest-800">{t.otp_label}</label>
                 <Input
                   value={otp}
-                  onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                  placeholder="XXXXXX"
-                  className="text-center text-2xl tracking-[0.5em] font-mono border-forest-200 py-3"
+                  onChange={(e) => setOtp(e.target.value.replace(/\D/g, '').slice(0, 8))}
+                  placeholder="X X X X X X X X"
+                  className="text-center text-2xl tracking-[0.2em] font-mono border-forest-200 py-3"
                   autoFocus
                 />
               </div>
