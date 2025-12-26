@@ -22,6 +22,7 @@ export default function AdminLoginPage() {
       localStorage.setItem('admin_auth', 'true');
       toast.success('Access Granted');
       setTimeout(() => {
+        toast.dismiss(); // Clean up toast before moving
         navigate('/dashboard');
       }, 500);
     } else {
@@ -35,7 +36,7 @@ export default function AdminLoginPage() {
       {/* Background Pattern */}
       <div className="absolute inset-0 bg-tiger-pattern opacity-5 pointer-events-none"></div>
 
-      <Toaster position="top-center" />
+      {/* Toaster removed here, handled globally in App.tsx */}
       
       <div className="mb-8 text-center z-10">
          <div className="w-24 h-24 bg-white rounded-full flex items-center justify-center border-4 border-tiger-gold mx-auto mb-6 shadow-glow overflow-hidden">

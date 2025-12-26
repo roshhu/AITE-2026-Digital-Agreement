@@ -10,6 +10,7 @@ import { authService } from '../services/authService';
 import { translations } from '../translations';
 
 export default function AuthPage() {
+  // Toaster handled in App.tsx globally
   const navigate = useNavigate();
   const setVolunteer = useAuthStore((state) => state.setVolunteer);
   const language = useAuthStore((state) => state.language);
