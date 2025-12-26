@@ -146,43 +146,38 @@ export const authService = {
     });
 
     // ---------------------------------------------------------
-    // LIVE MODE: Send OTP via Edge Function
+    // LIVE MODE: Send OTP via Supabase Auth (Uses your AWS SES)
     // ---------------------------------------------------------
     try {
-        // In production, we MUST call the edge function to send real emails
-        // We check if we are in a production-like environment (or just default to trying)
-        
-        const { error: edgeError } = await supabase.functions.invoke('send-secure-otp', {
-            body: {
-                to: email,
-                name: volunteer.full_name,
-                otp: otp, 
-                subject: 'AITE-2026 Secure Access Code'
+        const { error: authError } = await supabase.auth.signInWithOtp({
+            email: email,
+            options: {
+                shouldCreateUser: false, // Only allow existing users (or true if you want to allow auto-signup, but we check volunteer table first)
             }
         });
 
-        if (edgeError) {
-             console.warn("Edge Function failed, falling back to console logs (Dev Mode Only).", edgeError);
-             // In strict production, we might want to throw here, but for now we allow fallback
-             // throw edgeError; 
-        } else {
-             console.log("✅ Secure OTP sent via Edge Function.");
+        if (authError) {
+             console.error("Supabase Auth OTP Error:", authError);
+             // If user doesn't exist in auth but exists in volunteers, we might need to create them
+             if (authError.message.includes("Signups not allowed")) {
+                 const { error: signupError } = await supabase.auth.signInWithOtp({
+                    email: email,
+                    options: { shouldCreateUser: true }
+                 });
+                 if (signupError) throw signupError;
+             } else {
+                 throw authError;
+             }
         }
+        
+        console.log("✅ OTP sent via Supabase Auth (AWS SES).");
        
-    } catch (err) {
-        console.error('Failed to invoke edge function:', err);
+    } catch (err: any) {
+        console.error('Failed to send OTP:', err);
+        return { success: false, error: 'Failed to send email. ' + err.message, type: 'system_error' };
     }
 
-    // ---------------------------------------------------------
-    // LOGGING (Safe to keep for debugging, user won't see console easily on mobile)
-    // ---------------------------------------------------------
-    console.group('🔐 AITE-2026 SECURE OTP DISPATCH');
-    console.log(`%cTo: ${email}`, 'color: #64748b; font-weight: bold;');
-    console.log(`%cCode: ${otp}`, 'color: #059669; font-weight: bold; font-size: 16px;');
-    console.log('%c(Check your inbox in Production)', 'color: #94a3b8; font-style: italic;');
-    console.groupEnd();
-
-    // 6. Return Masked Email (Do NOT return OTP in production)
+    // 6. Return Masked Email
     const maskedEmail = email.replace(/(.{2})(.*)(?=@)/, (gp1, gp2, gp3) => { 
         return gp2 + "*".repeat(gp3.length); 
     });
@@ -191,65 +186,39 @@ export const authService = {
   },
 
   async verifyOtp(email: string, otp: string) {
-    // 1. Get OTP record
-    const { data: record, error } = await supabase
-      .from('email_otp_store')
-      .select('*')
-      .eq('email', email)
-      .single();
+    // 1. Verify with Supabase Auth
+    const { data, error } = await supabase.auth.verifyOtp({
+        email,
+        token: otp,
+        type: 'email'
+    });
 
-    if (error || !record) {
-      return { success: false, error: 'Invalid request.', type: 'invalid' };
-    }
-
-    // 2. Check Blocked
-    if (record.blocked) {
-      return { success: false, error: 'Too many failed OTP attempts. Please request a new one.', type: 'blocked' };
-    }
-
-    // 3. Check Expiry
-    if (new Date(record.expires_at) < new Date()) {
-      return { success: false, error: 'OTP expired.', type: 'expired' };
-    }
-
-    // 4. Verify OTP (Hash Comparison)
-    const hashedInput = hashOTP(otp);
-    
-    if (record.otp !== hashedInput) {
-      const newCount = (record.attempts_count || 0) + 1;
-      await supabase.from('email_otp_store').update({ attempts_count: newCount }).eq('id', record.id);
-      
-      // Update Volunteer Risk Score
-      if (newCount >= 3) {
-         await supabase.from('volunteers').update({ fraud_score: 'Medium' }).eq('email', email);
-      }
-      if (newCount >= 5) {
-         await supabase.from('volunteers').update({ status: 'blocked', fraud_score: 'High' }).eq('email', email);
-         await supabase.from('email_otp_store').update({ blocked: true }).eq('id', record.id);
-         return { success: false, error: 'Too many failed attempts. Account Locked.', type: 'locked' };
-      }
-      
+    if (error) {
+      // Fallback: Check local DB if Supabase Auth fails (for demo/testing)
+      // ... existing local verification logic could stay here if needed, but let's rely on Auth
+      console.error("Auth Verify Error:", error);
       return { success: false, error: 'Invalid OTP.', type: 'invalid' };
     }
 
-    // 5. Success - Clean up
-    await supabase.from('email_otp_store').delete().eq('id', record.id);
-    
-    // 6. Update Last Login Time & Reset Failures
-    await supabase
-      .from('volunteers')
-      .update({ 
-        last_login_at: new Date().toISOString(),
-        otp_failed_attempts: 0 // Reset failures on success
-      })
-      .eq('email', email);
-
-    // Get volunteer details to return
+    // 2. Success - Get volunteer details
     const { data: volunteer } = await supabase
       .from('volunteers')
       .select('*')
       .eq('email', email)
       .single();
+
+    if (!volunteer) {
+        return { success: false, error: 'Login successful but Volunteer record not found.', type: 'invalid' };
+    }
+    
+    // 3. Update Last Login Time & Reset Failures
+    await supabase
+      .from('volunteers')
+      .update({ 
+        last_login_at: new Date().toISOString(),
+        otp_failed_attempts: 0 
+      })
+      .eq('email', email);
 
     return { success: true, volunteer };
   },
