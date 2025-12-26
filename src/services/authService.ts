@@ -42,8 +42,8 @@ export const authService = {
     const lastSent = dailyLogs?.[0]?.sent_at ? new Date(dailyLogs[0].sent_at) : null;
     const now = new Date();
 
-    // Max 4 attempts per day
-    if (sentCount >= 4) {
+    // Max 100 attempts per day (Increased for Testing)
+    if (sentCount >= 100) {
       return { success: false, error: 'You have reached today’s maximum OTP requests. Try again tomorrow.', type: 'limit_exceeded' };
     }
 
