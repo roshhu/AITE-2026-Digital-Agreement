@@ -125,12 +125,12 @@ export const authService = {
       // 5. Store OTP in DB (Custom Store)
       const { error: otpError } = await supabase
         .from('email_otp_store')
-        .upsert({ 
-          email, 
-          otp_hash: otp, // Storing plain for now for matching, ideally hash it. 
-          expires_at: expiresAt,
-          created_at: new Date().toISOString()
-        }, { onConflict: 'email' });
+         .upsert({ 
+           email, 
+           otp: otp, // Fixed: using 'otp' column instead of 'otp_hash'
+           expires_at: expiresAt,
+           created_at: new Date().toISOString()
+         }, { onConflict: 'email' });
 
       if (otpError) throw otpError;
 
@@ -175,8 +175,8 @@ export const authService = {
         .eq('email', email)
         .single();
 
-      if (storeData && storeData.otp_hash === otp) {
-          // Valid Custom OTP!
+      if (storeData && storeData.otp === otp) {
+           // Valid Custom OTP!
           // Now we need to issue a Session.
           // Since we can't mint a token easily without backend, 
           // we will use the "Magic Link" or just allow access if we don't strictly need RLS write access.
