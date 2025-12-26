@@ -373,7 +373,7 @@ export default function AuthPage() {
                 <Input
                   name="mobile"
                   type="tel"
-                  placeholder="8555007177"
+                  placeholder="0123456789"
                   value={formData.mobile}
                   onChange={(e) => setFormData({...formData, mobile: e.target.value.replace(/\D/g, '').slice(0, 10)})}
                   disabled={loading}
